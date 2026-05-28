@@ -1,6 +1,7 @@
 ﻿import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import OpenAI from "openai";
 
 const app = express();
 
@@ -527,9 +528,136 @@ app.post("/api/ai/coach", async (req, res) => {
   }
 });
 
+
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
+
+function fallbackEssayFeedback(essay: string) {
+  const words = essay.trim().split(/\s+/).filter(Boolean).length;
+
+  return {
+    mode: "fallback",
+    title: "Majora Essay Feedback",
+    summary: words < 250
+      ? "This is a good start, but it needs more depth and specific storytelling."
+      : "This draft has a solid foundation. Focus next on stronger reflection, structure, and a memorable ending.",
+    strengths: [
+      "You have a clear starting point.",
+      "The essay can be shaped into a stronger personal story.",
+    ],
+    improvements: [
+      "Add more specific details.",
+      "Explain what you learned and how you changed.",
+      "Make the ending more confident and memorable.",
+    ],
+    suggestions: [
+      "Start with a vivid moment.",
+      "Cut repeated ideas.",
+      "Connect your story to your future goals.",
+    ],
+  };
+}
+
+app.post("/api/ai/essay-feedback", async (req, res) => {
+  try {
+    const essay = String(req.body?.essay ?? "").trim();
+    const essayType = String(req.body?.essayType ?? "personal_statement");
+
+    if (!essay) {
+      return res.status(400).json({ error: "Missing essay text" });
+    }
+
+    if (!openai) {
+      return res.json(fallbackEssayFeedback(essay));
+    }
+
+    const response = await openai.responses.create({
+      model: "gpt-5.5",
+      input: [
+        {
+          role: "system",
+          content:
+            "You are Majora, a supportive college admissions writing coach. Give practical, honest, student-friendly feedback. Do not write the full essay for the student. Help them improve their own work.",
+        },
+        {
+          role: "user",
+          content:
+            `Essay type: ${essayType}\n\nEssay:\n${essay}\n\nReturn feedback with: summary, strengths, improvements, and rewrite suggestions.`,
+        },
+      ],
+    });
+
+    res.json({
+      mode: "ai",
+      title: "Majora Essay Feedback",
+      text: response.output_text,
+    });
+  } catch (e: any) {
+    res.json(fallbackEssayFeedback(String(req.body?.essay ?? "")));
+  }
+});
+
+app.post("/api/ai/admissions-coach", async (req, res) => {
+  try {
+    const question = String(req.body?.question ?? "").trim();
+    const context = req.body?.context ?? {};
+
+    if (!question) {
+      return res.status(400).json({ error: "Missing question" });
+    }
+
+    if (!openai) {
+      return res.json({
+        mode: "fallback",
+        title: "Majora Coach",
+        answer:
+          "Focus on your next highest-priority step: update deadlines, strengthen essays, confirm FAFSA status, check recommendation letters, and apply for scholarships connected to your saved colleges.",
+        steps: [
+          "Open Priority Planner.",
+          "Update Application Tracker.",
+          "Use Essay Studio for drafts.",
+          "Use Scholarship Finder for funding steps.",
+        ],
+      });
+    }
+
+    const response = await openai.responses.create({
+      model: "gpt-5.5",
+      input: [
+        {
+          role: "system",
+          content:
+            "You are Majora, a practical college admissions coach. Give concise, supportive, personalized guidance. Avoid guarantees about admission or financial aid.",
+        },
+        {
+          role: "user",
+          content:
+            `Student question: ${question}\n\nStudent context:\n${JSON.stringify(context, null, 2)}\n\nGive a clear answer and 3-5 next steps.`,
+        },
+      ],
+    });
+
+    res.json({
+      mode: "ai",
+      title: "Majora Admissions Coach",
+      text: response.output_text,
+    });
+  } catch (e: any) {
+    res.json({
+      mode: "fallback",
+      title: "Majora Coach",
+      answer:
+        "Majora could not reach the AI engine right now, but your next best move is to review Priority Planner and update your application tracker.",
+      steps: ["Check deadlines.", "Update essays.", "Confirm FAFSA.", "Review scholarships."],
+    });
+  }
+});
+
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
