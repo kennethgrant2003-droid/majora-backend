@@ -1,0 +1,271 @@
+import express from "express";
+import cors from "cors";
+
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Health check
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+// ------------------------------
+// Helpers
+// ------------------------------
+function toWebsite(raw: any): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  return `https://${s}`;
+}
+
+// ------------------------------
+// GET /api/colleges?q=...
+// Real College Scorecard search (by name keywords)
+// ------------------------------
+app.get("/api/colleges", async (req, res) => {
+  try {
+    const apiKey = process.env.COLLEGE_SCORECARD_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        error: "Missing COLLEGE_SCORECARD_API_KEY",
+        howToFix: 'Run: setx COLLEGE_SCORECARD_API_KEY "YOUR_KEY" ?? ??? ??? ????????? ????? ??????? ?? ????',
+      });
+    }
+
+    const q = String(req.query.q ?? "").trim();
+    const state = String(req.query.state ?? "").trim().toUpperCase();
+
+    if (!q) {
+      return res.json({ meta: { total: 0, q, filters: { state: state || null }, per_page: 25 }, results: [] });
+    }
+
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      per_page: "25",
+      "school.name__icontains": q,
+      fields:
+        "id,school.name,school.city,school.state,school.school_url," +
+        "latest.student.size," +
+        "latest.cost.tuition.in_state," +
+        "latest.cost.tuition.out_of_state," +
+        "latest.school.locale",
+    });
+
+    if (state && state !== "ALL") {
+      params.append("school.state", state);
+    }
+
+    const r = await fetch(`https://api.data.gov/ed/collegescorecard/v1/schools?${params.toString()}`);
+    const data: any = await r.json();
+
+    const results = (data.results ?? []).map((s: any) => ({
+      id: String(s.id),
+      name: s["school.name"] ?? "",
+      city: s["school.city"] ?? "",
+      state: s["school.state"] ?? "",
+      url: toWebsite(s["school.school_url"]),
+      size: s["latest.student.size"] ?? null,
+      tuition_in_state: s["latest.cost.tuition.in_state"] ?? null,
+      tuition_out_state: s["latest.cost.tuition.out_of_state"] ?? null,
+      locale: s["latest.school.locale"] ?? null,
+    }));
+
+    res.json({
+      meta: { total: results.length, q, filters: { state: state || null }, per_page: 25 },
+      results,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "Search failed" });
+  }
+});
+
+// ------------------------------
+// GET /api/colleges/:id
+// Real college detail (adds tuition/admission/completion/locale)
+// ------------------------------
+app.get("/api/colleges/:id", async (req, res) => {
+  try {
+    const apiKey = process.env.COLLEGE_SCORECARD_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: "Missing COLLEGE_SCORECARD_API_KEY" });
+
+    const id = String(req.params.id).trim();
+    if (!id) return res.status(400).json({ error: "Missing id" });
+
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      per_page: "1",
+      id,
+      fields:
+        "id,school.name,school.city,school.state,school.school_url," +
+        "latest.student.size," +
+        "latest.cost.tuition.in_state," +
+        "latest.cost.tuition.out_of_state," +
+        "latest.admissions.admission_rate.overall," +
+        "latest.completion.rate_suppressed.overall," +
+        "latest.school.locale",
+    });
+
+    const r = await fetch(`https://api.data.gov/ed/collegescorecard/v1/schools?${params.toString()}`);
+    const data: any = await r.json();
+    const s = (data.results ?? [])[0];
+
+    if (!s) return res.status(404).json({ error: "College not found" });
+
+    res.json({
+      id: String(s.id),
+      name: s["school.name"] ?? "",
+      city: s["school.city"] ?? "",
+      state: s["school.state"] ?? "",
+      url: toWebsite(s["school.school_url"]),
+      size: s["latest.student.size"] ?? null,
+      in_state_tuition: s["latest.cost.tuition.in_state"] ?? null,
+      out_state_tuition: s["latest.cost.tuition.out_of_state"] ?? null,
+      admission_rate: s["latest.admissions.admission_rate.overall"] ?? null,
+      completion_rate: s["latest.completion.rate_suppressed.overall"] ?? null,
+      locale: s["latest.school.locale"] ?? null,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "Detail failed" });
+  }
+});
+
+// ------------------------------
+// POST /api/match  ? FIXED
+// - National results unless state chosen
+// - Safe scoring (never filters to 0)
+// - Returns tuition + website + score per school
+// ------------------------------
+app.post("/api/match", async (req, res) => {
+  try {
+    const apiKey = process.env.COLLEGE_SCORECARD_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: "Missing COLLEGE_SCORECARD_API_KEY" });
+
+    const preferredState = String(req.body?.preferred_state ?? "ALL").trim().toUpperCase();
+    const budget = String(req.body?.budget ?? "ANY").trim().toUpperCase();
+    const localePref = String(req.body?.locale ?? "ANY").trim().toUpperCase();
+    const majors = Array.isArray(req.body?.selected_majors) ? req.body.selected_majors : [];
+
+    const params = new URLSearchParams({
+      api_key: apiKey,
+      per_page: "60",
+      fields:
+        "id,school.name,school.city,school.state,school.school_url," +
+        "latest.student.size," +
+        "latest.cost.tuition.in_state," +
+        "latest.cost.tuition.out_of_state," +
+        "latest.admissions.admission_rate.overall," +
+        "latest.completion.rate_suppressed.overall," +
+        "latest.school.locale",
+    });
+
+    // only apply state filter when user picks a real state
+    if (preferredState && preferredState !== "ALL") {
+      params.append("school.state", preferredState);
+    }
+
+    const r = await fetch(`https://api.data.gov/ed/collegescorecard/v1/schools?${params.toString()}`);
+    const data: any = await r.json();
+    const schools: any[] = data.results ?? [];
+
+    if (!schools.length) {
+      return res.json({
+        meta: { total: 0, filters: { preferred_state: preferredState, budget, locale: localePref } },
+        results: [],
+      });
+    }
+
+    const results = schools.map((s: any) => {
+      let score = 55; // start baseline
+      const reasons: string[] = [];
+
+      const tuitionOut = s["latest.cost.tuition.out_of_state"];
+      const tuitionIn = s["latest.cost.tuition.in_state"];
+      const tuition = (typeof tuitionOut === "number" ? tuitionOut : (typeof tuitionIn === "number" ? tuitionIn : null));
+
+      const locale = s["latest.school.locale"] ?? null;
+
+      // Budget scoring (use tuition)
+      if (budget === "LOW") {
+        if (typeof tuition === "number" && tuition > 0 && tuition < 15000) { score += 18; reasons.push("Affordable tuition"); }
+        else if (typeof tuition === "number" && tuition >= 15000 && tuition <= 30000) { score += 8; reasons.push("Moderate tuition"); }
+        else { score -= 5; }
+      } else if (budget === "MID") {
+        if (typeof tuition === "number" && tuition >= 15000 && tuition <= 30000) { score += 18; reasons.push("Mid-range tuition"); }
+        else if (typeof tuition === "number" && tuition > 0 && tuition < 15000) { score += 10; reasons.push("Lower tuition"); }
+        else { score -= 3; }
+      } else if (budget === "HIGH") {
+        score += 8;
+        reasons.push("Flexible budget");
+      } else {
+        score += 4;
+      }
+
+      // Locale scoring (College Scorecard locale: lower = city-ish, higher = town/rural)
+      // We'll map:
+      // URBAN => locales 1-3
+      // SUBURBAN => 4-6
+      // COLLEGE_TOWN => 7-9 (roughly town/rural)
+      if (localePref === "URBAN") {
+        if (typeof locale === "number" && locale <= 3) { score += 12; reasons.push("Urban setting"); } else { score -= 2; }
+      } else if (localePref === "SUBURBAN") {
+        if (typeof locale === "number" && locale >= 4 && locale <= 6) { score += 12; reasons.push("Suburban setting"); } else { score -= 2; }
+      } else if (localePref === "COLLEGE_TOWN") {
+        if (typeof locale === "number" && locale >= 7) { score += 12; reasons.push("College-town vibe"); } else { score -= 2; }
+      } else {
+        score += 4;
+        reasons.push("Setting fits (any)");
+      }
+
+      // Major boost (placeholder until we add real CIP matching)
+      if (majors.length) {
+        score += 8;
+        reasons.push("Matches your major interest");
+      }
+
+      if (score < 40) score = 40;
+      if (score > 95) score = 95;
+
+      const website = toWebsite(s["school.school_url"]);
+
+      return {
+        college: {
+          id: String(s.id),
+          name: s["school.name"] ?? "",
+          city: s["school.city"] ?? "",
+          state: s["school.state"] ?? "",
+          size: s["latest.student.size"] ?? null,
+          tuition: tuition ?? null,
+          in_state_tuition: tuitionIn ?? null,
+          out_state_tuition: tuitionOut ?? null,
+          locale: locale ?? null,
+          website,
+          admission_rate: s["latest.admissions.admission_rate.overall"] ?? null,
+          completion_rate: s["latest.completion.rate_suppressed.overall"] ?? null,
+        },
+        score,
+        tier: score >= 85 ? "strong_match" : score >= 70 ? "solid_match" : "explore",
+        why_matched: reasons,
+      };
+    });
+
+    // sort highest score first
+    results.sort((a, b) => b.score - a.score);
+
+    res.json({
+      meta: { total: results.length, filters: { preferred_state: preferredState, budget, locale: localePref } },
+      results,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "Match failed" });
+  }
+});
+
+// IMPORTANT: bind to 0.0.0.0 so other devices on Wi-Fi can reach it
+const port = Number(process.env.PORT) || 3000;
+app.listen(port, "0.0.0.0", () => {
+  console.log(`API running on http://0.0.0.0:${port}`);
+});

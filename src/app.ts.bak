@@ -1,0 +1,399 @@
+﻿import express from "express";
+import cors from "cors";
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+// ---------- Helpers ----------
+function toUpper(s: any) {
+  return String(s ?? "").trim().toUpperCase();
+}
+
+function safeNum(v: any): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Budget ranges (annual tuition)
+function budgetRange(budget: string): { min: number; max: number } | null {
+  switch (budget) {
+    case "LT_10K":
+      return { min: 0, max: 10000 };
+    case "10_20K":
+      return { min: 10000, max: 20000 };
+    case "20_30K":
+      return { min: 20000, max: 30000 };
+    case "30_40K":
+      return { min: 30000, max: 40000 };
+    case "40K_PLUS":
+      return { min: 40000, max: 1000000 };
+    default:
+      return null; // ANY
+  }
+}
+
+// Locale groups based on College Scorecard locale codes:
+// City: 11-13, Suburb: 21-23, Town: 31-33, Rural: 41-43
+function localeMatches(localePref: string, localeCode: number | null): boolean {
+  if (!localePref || localePref === "ANY") return true;
+  if (localeCode == null) return false;
+
+  const group = (min: number, max: number) => localeCode >= min && localeCode <= max;
+
+  switch (localePref) {
+    case "CITY":
+      return group(11, 13);
+    case "SUBURB":
+      return group(21, 23);
+    case "TOWN":
+      return group(31, 33);
+    case "RURAL":
+      return group(41, 43);
+    default:
+      return true;
+  }
+}
+
+function localeLabel(localeCode: number | null): string | null {
+  if (localeCode == null) return null;
+  const inRange = (a: number, b: number) => localeCode >= a && localeCode <= b;
+  if (inRange(11, 13)) return "City";
+  if (inRange(21, 23)) return "Suburb";
+  if (inRange(31, 33)) return "Town";
+  if (inRange(41, 43)) return "Rural";
+  return "Other";
+}
+
+// ---------- Health ----------
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+// ---------- College Scorecard: Search (already working for you) ----------
+app.get("/api/colleges", async (req, res) => {
+  try {
+    const apiKey = process.env.COLLEGE_SCORECARD_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({
+        error: "Missing COLLEGE_SCORECARD_API_KEY",
+        howToFix: 'Run: setx COLLEGE_SCORECARD_API_KEY "YOUR_KEY" then reopen terminal and restart backend',
+      });
+    }
+
+    const q = String(req.query.q ?? "").trim();
+    const state = toUpper(req.query.state);
+    const perPage = 25;
+
+    const url = new URL("https://api.data.gov/ed/collegescorecard/v1/schools");
+    url.searchParams.set("api_key", apiKey);
+    url.searchParams.set("per_page", String(perPage));
+    url.searchParams.set(
+      "fields",
+      [
+        "id",
+        "school.name",
+        "school.city",
+        "school.state",
+        "school.url",
+        "latest.student.size",
+        "latest.cost.tuition.in_state",
+        "latest.cost.tuition.out_of_state",
+        "school.locale",
+      ].join(",")
+    );
+
+    if (q) url.searchParams.set("school.name", q);
+    if (state && state !== "ALL") url.searchParams.set("school.state", state);
+
+    const r = await fetch(url.toString());
+    const j: any = await r.json();
+
+    const results = Array.isArray(j?.results) ? j.results : [];
+    const mapped = results.map((row: any) => {
+      const inState = safeNum(row?.["latest.cost.tuition.in_state"]);
+      const outState = safeNum(row?.["latest.cost.tuition.out_of_state"]);
+      const tuition = inState ?? outState ?? null;
+
+      const locale = safeNum(row?.["school.locale"]);
+      return {
+        id: String(row?.id ?? ""),
+        name: String(row?.["school.name"] ?? ""),
+        city: String(row?.["school.city"] ?? ""),
+        state: String(row?.["school.state"] ?? ""),
+        url: row?.["school.url"] ? String(row["school.url"]) : undefined,
+        website: row?.["school.url"] ? String(row["school.url"]) : undefined,
+        size: safeNum(row?.["latest.student.size"]),
+        tuition,
+        locale,
+        locale_label: localeLabel(locale),
+      };
+    });
+
+    res.json({
+      meta: {
+        total: mapped.length,
+        q,
+        filters: { state: state || null },
+        per_page: perPage,
+      },
+      results: mapped,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "Search failed" });
+  }
+});
+
+// ---------- College Scorecard: Detail ----------
+app.get("/api/college/:id", async (req, res) => {
+  try {
+    const apiKey = process.env.COLLEGE_SCORECARD_API_KEY;
+    if (!apiKey) return res.status(400).json({ error: "Missing COLLEGE_SCORECARD_API_KEY" });
+
+    const id = String(req.params.id ?? "").trim();
+    if (!id) return res.status(400).json({ error: "Missing id" });
+
+    const url = new URL("https://api.data.gov/ed/collegescorecard/v1/schools");
+    url.searchParams.set("api_key", apiKey);
+    url.searchParams.set("id", id);
+    url.searchParams.set(
+      "fields",
+      [
+        "id",
+        "school.name",
+        "school.city",
+        "school.state",
+        "school.url",
+        "latest.student.size",
+        "latest.cost.tuition.in_state",
+        "latest.cost.tuition.out_of_state",
+        "school.locale",
+        "school.school_url",
+      ].join(",")
+    );
+
+    const r = await fetch(url.toString());
+    const j: any = await r.json();
+    const row = Array.isArray(j?.results) ? j.results[0] : null;
+
+    if (!row) return res.status(404).json({ error: "College not found" });
+
+    const inState = safeNum(row?.["latest.cost.tuition.in_state"]);
+    const outState = safeNum(row?.["latest.cost.tuition.out_of_state"]);
+    const tuition = inState ?? outState ?? null;
+    const locale = safeNum(row?.["school.locale"]);
+
+    res.json({
+      id: String(row?.id ?? ""),
+      name: String(row?.["school.name"] ?? ""),
+      city: String(row?.["school.city"] ?? ""),
+      state: String(row?.["school.state"] ?? ""),
+      url: row?.["school.url"] ? String(row["school.url"]) : undefined,
+      website: row?.["school.url"] ? String(row["school.url"]) : undefined,
+      size: safeNum(row?.["latest.student.size"]),
+      tuition,
+      locale,
+      locale_label: localeLabel(locale),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "Detail failed" });
+  }
+});
+
+// ---------- MATCH (THIS is the important fix) ----------
+app.post("/api/match", async (req, res) => {
+  try {
+    const apiKey = process.env.COLLEGE_SCORECARD_API_KEY;
+    if (!apiKey) return res.status(400).json({ error: "Missing COLLEGE_SCORECARD_API_KEY" });
+
+    // Read quiz payload
+    const selectedMajors: string[] = Array.isArray(req.body?.selected_majors) ? req.body.selected_majors : [];
+    const preferredState = toUpper(req.body?.preferred_state || "ALL"); // ALL means national
+    const campusSize = toUpper(req.body?.campus_size || "ANY");
+    const budget = toUpper(req.body?.budget || "ANY");
+    const localePref = toUpper(req.body?.locale || "ANY");
+    const hbcu = toUpper(req.body?.hbcu || "ANY"); // YES / NO / ANY
+    const greekLife = toUpper(req.body?.greek_life || "ANY"); // YES / NO / ANY (score only)
+
+    // Debug so we KNOW backend is receiving changes
+    console.log("MATCH BODY:", {
+      selectedMajors,
+      preferredState,
+      campusSize,
+      budget,
+      localePref,
+      hbcu,
+      greekLife,
+    });
+
+    // Build Scorecard request (National by default)
+    const url = new URL("https://api.data.gov/ed/collegescorecard/v1/schools");
+    url.searchParams.set("api_key", apiKey);
+
+    // Pull a larger pool then filter/score in code
+    url.searchParams.set("per_page", "100");
+    url.searchParams.set("sort", "latest.student.size:desc");
+
+    url.searchParams.set(
+      "fields",
+      [
+        "id",
+        "school.name",
+        "school.city",
+        "school.state",
+        "school.url",
+        "latest.student.size",
+        "latest.cost.tuition.in_state",
+        "latest.cost.tuition.out_of_state",
+        "school.locale",
+        "school.minority_serving.historically_black",
+      ].join(",")
+    );
+
+    // IMPORTANT: Only apply state filter when user chose a specific state
+    if (preferredState && preferredState !== "ALL" && preferredState !== "ANY") {
+      url.searchParams.set("school.state", preferredState);
+    }
+
+    // If user wants only HBCUs, we can filter at API level
+    if (hbcu === "YES") {
+      url.searchParams.set("school.minority_serving.historically_black", "1");
+    }
+
+    const r = await fetch(url.toString());
+    const j: any = await r.json();
+    const rows = Array.isArray(j?.results) ? j.results : [];
+
+    const bRange = budgetRange(budget);
+
+    // Map + filter locally so results ACTUALLY change
+    const pool = rows
+      .map((row: any) => {
+        const inState = safeNum(row?.["latest.cost.tuition.in_state"]);
+        const outState = safeNum(row?.["latest.cost.tuition.out_of_state"]);
+        const tuition = inState ?? outState ?? null;
+
+        const locale = safeNum(row?.["school.locale"]);
+        const isHbcu = String(row?.["school.minority_serving.historically_black"] ?? "") === "1";
+
+        return {
+          id: String(row?.id ?? ""),
+          name: String(row?.["school.name"] ?? ""),
+          city: String(row?.["school.city"] ?? ""),
+          state: String(row?.["school.state"] ?? ""),
+          website: row?.["school.url"] ? String(row["school.url"]) : undefined,
+          url: row?.["school.url"] ? String(row["school.url"]) : undefined,
+          size: safeNum(row?.["latest.student.size"]),
+          tuition,
+          locale,
+          locale_label: localeLabel(locale),
+          isHbcu,
+        };
+      })
+      .filter((c: any) => c.id && c.name) // drop blanks
+      .filter((c: any) => localeMatches(localePref, c.locale))
+      .filter((c: any) => {
+        // budget filter (if chosen). If tuition missing, keep it (so we don't delete tons of schools).
+        if (!bRange) return true;
+        if (c.tuition == null) return true;
+        return c.tuition >= bRange.min && c.tuition <= bRange.max;
+      })
+      .filter((c: any) => {
+        // If hbcu=NO, remove HBCUs; if ANY, keep all; if YES already filtered above.
+        if (hbcu === "NO") return !c.isHbcu;
+        return true;
+      });
+
+    // Score results so list order changes with quiz options
+    const scored = pool.map((c: any) => {
+      let score = 60;
+
+      // State preference
+      if (preferredState !== "ALL" && preferredState !== "ANY") {
+        if (c.state === preferredState) score += 12;
+      } else {
+        score += 4; // national explore
+      }
+
+      // Locale preference
+      if (localePref !== "ANY") {
+        score += localeMatches(localePref, c.locale) ? 10 : 0;
+      }
+
+      // Budget preference
+      if (bRange) {
+        if (c.tuition == null) score += 2; // unknown but keep
+        else if (c.tuition >= bRange.min && c.tuition <= bRange.max) score += 10;
+      }
+
+      // HBCU preference
+      if (hbcu === "YES") score += c.isHbcu ? 12 : 0;
+      if (hbcu === "NO") score += !c.isHbcu ? 4 : 0;
+
+      // Campus size preference (score only for now)
+      if (campusSize !== "ANY" && c.size != null) {
+        if (campusSize === "SMALL" && c.size < 5000) score += 8;
+        if (campusSize === "MEDIUM" && c.size >= 5000 && c.size <= 15000) score += 8;
+        if (campusSize === "LARGE" && c.size > 15000) score += 8;
+      }
+
+      // Greek life (Scorecard doesn't expose it reliably; score only)
+      if (greekLife !== "ANY") score += 3;
+
+      const tier = score >= 90 ? "strong_match" : score >= 78 ? "solid_match" : "explore";
+
+      return {
+        college: {
+          id: c.id,
+          name: c.name,
+          city: c.city,
+          state: c.state,
+          size: c.size,
+          tuition: c.tuition,
+          locale: c.locale,
+          locale_label: c.locale_label,
+          website: c.website,
+          url: c.url,
+        },
+        score,
+        tier,
+        why_matched: [
+          preferredState === "ALL" ? "National search" : `State match: ${preferredState}`,
+          localePref === "ANY" ? "Any campus setting" : `Campus setting: ${localePref}`,
+          budget === "ANY" ? "Any budget" : `Budget: ${budget}`,
+          hbcu === "ANY" ? "HBCU: Any" : hbcu === "YES" ? "HBCU: Yes" : "HBCU: No",
+        ],
+      };
+    });
+
+    // Sort best first + return 60
+    scored.sort((a: any, b: any) => b.score - a.score);
+    const results = scored.slice(0, 60);
+
+    res.json({
+      meta: {
+        total: results.length,
+        filters: {
+          preferred_state: preferredState,
+          campus_size: campusSize,
+          budget,
+          locale: localePref,
+          hbcu,
+          greek_life: greekLife,
+          selected_majors: selectedMajors,
+        },
+      },
+      results,
+    });
+  } catch (e: any) {
+    console.error("MATCH ERROR:", e);
+    res.status(500).json({ error: e?.message ?? "Match failed" });
+  }
+});
+
+// Bind to 0.0.0.0 so phone can reach it on Wi-Fi
+const port = Number(process.env.PORT) || 3000;
+app.listen(port, "0.0.0.0", () => {
+  console.log(`API running on http://0.0.0.0:${port}`);
+});
