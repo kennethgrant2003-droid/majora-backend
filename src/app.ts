@@ -721,9 +721,76 @@ app.post("/api/ai/scholarships", async (req, res) => {
   }
 });
 
+
+function majoraVoiceForAgent(agentName: string) {
+  const name = String(agentName || "").toLowerCase();
+
+  if (name === "nova") return "nova";
+  if (name === "zion") return "onyx";
+  if (name === "luna") return "shimmer";
+  if (name === "kai") return "echo";
+  if (name === "aria") return "coral";
+  if (name === "ethan") return "cedar";
+
+  return "marin";
+}
+
+function cleanTtsText(text: string) {
+  return String(text || "")
+    .replace(/[^\w\s.,!?'"-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 900);
+}
+
+app.post("/api/ai/tts", async (req, res) => {
+  try {
+    const text = cleanTtsText(req.body?.text);
+    const agentName = String(req.body?.agentName || "Nova");
+
+    if (!text) {
+      return res.status(400).json({ error: "Missing text" });
+    }
+
+    if (!openai) {
+      return res.json({
+        mode: "fallback",
+        audioBase64: null,
+        message: "OpenAI key is not configured.",
+      });
+    }
+
+    const voice = majoraVoiceForAgent(agentName);
+
+    const speech = await openai.audio.speech.create({
+      model: "gpt-4o-mini-tts",
+      voice,
+      input: text,
+      format: "mp3",
+      instructions:
+        "Speak naturally like a friendly college guide. Be warm, clear, and human. Do not sound robotic.",
+    });
+
+    const buffer = Buffer.from(await speech.arrayBuffer());
+
+    res.json({
+      mode: "ai",
+      format: "mp3",
+      voice,
+      audioBase64: buffer.toString("base64"),
+    });
+  } catch (e: any) {
+    res.status(500).json({
+      error: "tts_failed",
+      message: e?.message || String(e),
+    });
+  }
+});
+
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
