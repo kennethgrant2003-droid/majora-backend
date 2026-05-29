@@ -766,7 +766,7 @@ app.post("/api/ai/tts", async (req, res) => {
       model: "gpt-4o-mini-tts",
       voice,
       input: text,
-      format: "mp3",
+
       instructions:
         "Speak naturally like a friendly college guide. Be warm, clear, and human. Do not sound robotic.",
     });
@@ -775,7 +775,7 @@ app.post("/api/ai/tts", async (req, res) => {
 
     res.json({
       mode: "ai",
-      format: "mp3",
+
       voice,
       audioBase64: buffer.toString("base64"),
     });
@@ -790,6 +790,8 @@ app.post("/api/ai/tts", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
+
 
 
 
