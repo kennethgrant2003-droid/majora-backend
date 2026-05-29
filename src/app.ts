@@ -654,9 +654,77 @@ app.post("/api/ai/admissions-coach", async (req, res) => {
   }
 });
 
+
+function fallbackScholarshipPlan(input: any) {
+  const major = String(input?.major ?? "").trim();
+  const state = String(input?.state ?? "").trim().toUpperCase();
+  const hbcu = String(input?.hbcu ?? "ANY");
+  const career = String(input?.career ?? "undecided").replace(/_/g, " ");
+  const essayStatus = String(input?.essayStatus ?? "not_started").replace(/_/g, " ");
+  const savedCount = Array.isArray(input?.savedColleges) ? input.savedColleges.length : 0;
+
+  return {
+    mode: "fallback",
+    title: "Majora Scholarship Plan",
+    text:
+      `Build your scholarship strategy around ${major || "your major interests"}, ${state || "your state/region"}, ${career}, and your saved colleges. ` +
+      `You currently have ${savedCount} saved college${savedCount === 1 ? "" : "s"} and your essay status is ${essayStatus}. ` +
+      `Prioritize school-specific scholarships first, then state/local awards, then major/career scholarships, then national awards.`,
+    categories: [
+      major ? `${major} major scholarships` : "Major-based scholarships",
+      state ? `${state} state and local scholarships` : "State and local scholarships",
+      hbcu === "YES" ? "HBCU-focused scholarships" : "School-specific scholarships",
+      "Community organization scholarships",
+      "Career pathway scholarships",
+    ],
+    steps: [
+      "Check each saved college website for freshman and departmental scholarships.",
+      "Prepare 250-word, 500-word, and 650-word essay versions.",
+      "Apply to local awards first because they usually have smaller applicant pools.",
+      "Track deadlines inside Application Tracker.",
+    ],
+  };
+}
+
+app.post("/api/ai/scholarships", async (req, res) => {
+  try {
+    const input = req.body ?? {};
+
+    if (!openai) {
+      return res.json(fallbackScholarshipPlan(input));
+    }
+
+    const response = await openai.responses.create({
+      model: "gpt-5.5",
+      input: [
+        {
+          role: "system",
+          content:
+            "You are Majora, a practical scholarship planning coach. Give personalized scholarship categories, realistic action steps, and essay strategy. Do not invent specific scholarship names or deadlines unless provided. Avoid guarantees about awards.",
+        },
+        {
+          role: "user",
+          content:
+            `Student scholarship context:\n${JSON.stringify(input, null, 2)}\n\n` +
+            "Create a personalized scholarship strategy with: priority categories, next action steps, essay strategy, and what to track.",
+        },
+      ],
+    });
+
+    res.json({
+      mode: "ai",
+      title: "Majora Scholarship Plan",
+      text: response.output_text,
+    });
+  } catch (e: any) {
+    res.json(fallbackScholarshipPlan(req.body ?? {}));
+  }
+});
+
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
