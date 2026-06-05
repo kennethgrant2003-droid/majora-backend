@@ -820,9 +820,52 @@ app.post("/api/ai/tts", async (req, res) => {
   }
 });
 
+
+app.post("/api/ai/transcribe", async (req, res) => {
+  try {
+    const audioBase64 = String(req.body?.audioBase64 || "");
+    const ext = String(req.body?.ext || "m4a").replace(".", "");
+
+    if (!audioBase64) {
+      return res.status(400).json({ error: "Missing audioBase64" });
+    }
+
+    if (!openai) {
+      return res.status(500).json({ error: "OpenAI key is not configured" });
+    }
+
+    const fs = await import("fs");
+    const os = await import("os");
+    const path = await import("path");
+
+    const filePath = path.join(os.tmpdir(), `majora-voice-${Date.now()}.${ext}`);
+    fs.writeFileSync(filePath, Buffer.from(audioBase64, "base64"));
+
+    const transcription = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(filePath) as any,
+      model: "whisper-1",
+    });
+
+    try {
+      fs.unlinkSync(filePath);
+    } catch {}
+
+    res.json({
+      mode: "ai",
+      text: transcription.text || "",
+    });
+  } catch (e: any) {
+    res.status(500).json({
+      error: "transcription_failed",
+      message: e?.message || String(e),
+    });
+  }
+});
+
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
