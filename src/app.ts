@@ -725,16 +725,84 @@ app.post("/api/ai/scholarships", async (req, res) => {
 function majoraVoiceForAgent(agentName: string) {
   const name = String(agentName || "").toLowerCase();
 
-  if (name === "nova") return "nova";
-  if (name === "zion") return "onyx";
+  if (name === "nova") return "marin";
   if (name === "luna") return "shimmer";
-  if (name === "kai") return "echo";
   if (name === "aria") return "coral";
+
+  if (name === "zion") return "cedar";
+  if (name === "kai") return "cedar";
   if (name === "ethan") return "cedar";
 
   return "marin";
 }
 
+
+function majoraInstructionsForAgent(agentName: string) {
+  const name = String(agentName || "").toLowerCase();
+
+  if (name === "nova") {
+    return `
+You are Nova.
+
+You are a warm college mentor.
+You are encouraging and confident.
+Speak naturally like a real person.
+Keep responses conversational and supportive.
+`;
+  }
+
+  if (name === "zion") {
+    return `
+You are Zion.
+
+You are calm, intelligent, and strategic.
+Your voice is deep and reassuring.
+You explain things clearly and confidently.
+Never sound robotic.
+`;
+  }
+
+  if (name === "luna") {
+    return `
+You are Luna.
+
+You are creative, positive, and energetic.
+You sound upbeat and friendly.
+Keep your tone warm and encouraging.
+`;
+  }
+
+  if (name === "kai") {
+    return `
+You are Kai.
+
+You are a motivational coach.
+You sound confident, energetic, and inspiring.
+Speak naturally like a trusted mentor.
+`;
+  }
+
+  if (name === "aria") {
+    return `
+You are Aria.
+
+You are organized, professional, and encouraging.
+You guide students with confidence and warmth.
+`;
+  }
+
+  if (name === "ethan") {
+    return `
+You are Ethan.
+
+You are steady, thoughtful, and dependable.
+You speak calmly and clearly.
+You sound like a trusted advisor.
+`;
+  }
+
+  return "Speak naturally and conversationally.";
+}
 function cleanTtsText(text: string) {
   return String(text || "")
     .replace(/[^\w\s.,!?'"-]/g, "")
@@ -767,8 +835,7 @@ app.post("/api/ai/tts", async (req, res) => {
       voice,
       input: text,
 
-      instructions:
-        "Speak naturally like a friendly college guide. Be warm, clear, and human. Do not sound robotic.",
+      instructions: majoraInstructionsForAgent(agentName),
     });
 
     const buffer = Buffer.from(await speech.arrayBuffer());
@@ -790,6 +857,7 @@ app.post("/api/ai/tts", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
