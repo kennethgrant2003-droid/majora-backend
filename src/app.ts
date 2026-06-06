@@ -957,10 +957,9 @@ app.post("/api/match-v2", async (req, res) => {
       "school.locale"
     ].join(","));
 
-    // Do not hard-filter by state. Score it instead.
-    // if (statePref !== "ALL" && statePref !== "ANY") {
-    //   params.set("school.state", statePref);
-    // }
+    if (statePref !== "ALL" && statePref !== "ANY") {
+      params.set("school.state", statePref);
+    }
 
     const url = `https://api.data.gov/ed/collegescorecard/v1/schools?${params.toString()}`;
     const response = await fetch(url);
@@ -1013,6 +1012,7 @@ app.post("/api/match-v2", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
