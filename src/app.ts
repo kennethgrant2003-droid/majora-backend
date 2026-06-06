@@ -938,6 +938,7 @@ app.post("/api/match-v2", async (req, res) => {
     const params = new URLSearchParams();
     params.set("api_key", apiKey);
     params.set("per_page", "100");
+    params.set("page", "0");
     params.set("school.operating", "1");
     // Keep query broad. Some College Scorecard filters can remove valid schools.
     // Majora ranks results after retrieval instead of over-filtering.
@@ -963,10 +964,18 @@ app.post("/api/match-v2", async (req, res) => {
     // }
 
     const url = `https://api.data.gov/ed/collegescorecard/v1/schools?${params.toString()}`;
-    const response = await fetch(url);
-    const data = await response.json();
+    const allResults: any[] = [];
 
-    const results = (data.results || [])
+    for (let page = 0; page < 8; page++) {
+      params.set("page", String(page));
+      const pageUrl = `https://api.data.gov/ed/collegescorecard/v1/schools?${params.toString()}`;
+      const response = await fetch(pageUrl);
+      const data = await response.json();
+
+      allResults.push(...(data.results || []));
+    }
+
+    const results = allResults
       .map((college: any) => {
         const scored = matchScoreV2(college, body);
 
@@ -1013,6 +1022,7 @@ app.post("/api/match-v2", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
