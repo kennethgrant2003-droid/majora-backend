@@ -863,9 +863,144 @@ app.post("/api/ai/transcribe", async (req, res) => {
   }
 });
 
+
+function matchScoreV2(college: any, body: any) {
+  let score = 50;
+  const reasons: string[] = [];
+
+  const statePref = String(body.preferred_state || body.state || "ALL").toUpperCase();
+  const budget = String(body.budget || "ANY").toUpperCase();
+  const hbcu = String(body.hbcu || "ANY").toUpperCase();
+
+  const schoolState = String(college["school.state"] || "");
+  const tuition = Number(college["latest.cost.tuition.in_state"] || college["latest.cost.tuition.out_of_state"] || 0);
+  const isHbcu = Number(college["school.minority_serving.historically_black"] || 0) === 1;
+
+  if (statePref !== "ALL" && statePref !== "ANY" && schoolState === statePref) {
+    score += 20;
+    reasons.push("Matches your preferred state");
+  }
+
+  if (budget.includes("UNDER") || budget.includes("20")) {
+    if (tuition > 0 && tuition <= 20000) {
+      score += 20;
+      reasons.push("Fits your tuition preference");
+    }
+  } else {
+    score += 8;
+    reasons.push("Budget flexibility match");
+  }
+
+  if (hbcu === "YES" && isHbcu) {
+    score += 15;
+    reasons.push("Matches your HBCU interest");
+  }
+
+  const gradRate = Number(college["latest.completion.completion_rate_4yr_150nt"] || 0);
+  if (gradRate >= 0.5) {
+    score += 10;
+    reasons.push("Strong graduation outcomes");
+  }
+
+  const admissionRate = Number(college["latest.admissions.admission_rate.overall"] || 0);
+  if (admissionRate > 0 && admissionRate <= 0.6) {
+    score += 5;
+    reasons.push("Selective academic environment");
+  }
+
+  score = Math.min(score, 100);
+
+  return {
+    score,
+    tier: score >= 85 ? "Best Match" : score >= 72 ? "Strong Match" : score >= 60 ? "Good Option" : "Explore",
+    why_matched: reasons.length ? reasons : ["Included as a possible college option"],
+  };
+}
+
+app.post("/api/match-v2", async (req, res) => {
+  try {
+    const apiKey = process.env.COLLEGE_SCORECARD_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ error: "Missing College Scorecard API key" });
+    }
+
+    const body = req.body || {};
+    const statePref = String(body.preferred_state || body.state || "ALL").toUpperCase();
+
+    const params = new URLSearchParams();
+    params.set("api_key", apiKey);
+    params.set("per_page", "100");
+    params.set("school.operating", "1");
+    params.set("latest.academics.program_available.assoc_or_bachelors", "true");
+    params.set("fields", [
+      "id",
+      "school.name",
+      "school.city",
+      "school.state",
+      "school.school_url",
+      "school.minority_serving.historically_black",
+      "latest.cost.tuition.in_state",
+      "latest.cost.tuition.out_of_state",
+      "latest.admissions.admission_rate.overall",
+      "latest.completion.completion_rate_4yr_150nt",
+      "latest.student.size"
+    ].join(","));
+
+    if (statePref !== "ALL" && statePref !== "ANY") {
+      params.set("school.state", statePref);
+    }
+
+    const url = `https://api.data.gov/ed/collegescorecard/v1/schools?${params.toString()}`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    const results = (data.results || [])
+      .map((college: any) => {
+        const scored = matchScoreV2(college, body);
+
+        return {
+          college: {
+            id: String(college.id),
+            name: college["school.name"],
+            city: college["school.city"],
+            state: college["school.state"],
+            website: college["school.school_url"] ? `https://${String(college["school.school_url"]).replace(/^https?:\/\//, "")}` : null,
+            tuition_in_state: college["latest.cost.tuition.in_state"] ?? null,
+            tuition_out_of_state: college["latest.cost.tuition.out_of_state"] ?? null,
+            admission_rate: college["latest.admissions.admission_rate.overall"] ?? null,
+            graduation_rate: college["latest.completion.completion_rate_4yr_150nt"] ?? null,
+            student_size: college["latest.student.size"] ?? null,
+            hbcu: Number(college["school.minority_serving.historically_black"] || 0) === 1,
+          },
+          score: scored.score,
+          tier: scored.tier,
+          why_matched: scored.why_matched,
+        };
+      })
+      .sort((a: any, b: any) => b.score - a.score)
+      .slice(0, 60);
+
+    res.json({
+      meta: {
+        total: results.length,
+        model: "Majora Match Scoring 2.0",
+        filters: body,
+      },
+      results,
+    });
+  } catch (e: any) {
+    res.status(500).json({
+      error: "match_v2_failed",
+      message: e?.message || String(e),
+    });
+  }
+});
+
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
