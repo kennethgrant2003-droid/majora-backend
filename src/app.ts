@@ -881,8 +881,11 @@ function matchScoreV2(college: any, body: any) {
   const isHbcu = Number(college["school.minority_serving.historically_black"] || 0) === 1;
 
   if (statePref !== "ALL" && statePref !== "ANY" && schoolState === statePref) {
-    score += 20;
-    reasons.push("Matches your preferred state");
+    score += 35;
+    reasons.push("Strong match for your preferred state");
+  } else if (statePref === "GA" && ["AL", "FL", "SC", "TN"].includes(schoolState)) {
+    score += 6;
+    reasons.push("Near your preferred region");
   }
 
   if (budget.includes("UNDER") || budget.includes("20")) {
@@ -1010,6 +1013,7 @@ app.post("/api/match-v2", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
