@@ -106,6 +106,7 @@ app.get("/api/colleges", async (req, res) => {
         "school.state",
         "school.url",
         "latest.student.size",
+      "latest.aid.median_debt.completers.overall",
       "school.locale",
         "latest.cost.tuition.in_state",
         "latest.cost.tuition.out_of_state",
@@ -177,6 +178,7 @@ app.get("/api/college/:id", async (req, res) => {
         "school.state",
         "school.url",
         "latest.student.size",
+      "latest.aid.median_debt.completers.overall",
       "school.locale",
         "latest.cost.tuition.in_state",
         "latest.cost.tuition.out_of_state",
@@ -241,6 +243,7 @@ app.get("/api/colleges/:id", async (req, res) => {
       "school.locale",
       "school.minority_serving.historically_black",
       "latest.student.size",
+      "latest.aid.median_debt.completers.overall",
       "school.locale",
       "latest.cost.tuition.in_state",
       "latest.cost.tuition.out_of_state",
@@ -335,6 +338,7 @@ app.post("/api/match", async (req, res) => {
       "school.locale",
       "school.minority_serving.historically_black",
       "latest.student.size",
+      "latest.aid.median_debt.completers.overall",
       "school.locale",
       "latest.cost.tuition.in_state",
       "latest.cost.tuition.out_of_state",
@@ -955,6 +959,7 @@ app.post("/api/match-v2", async (req, res) => {
       "latest.admissions.admission_rate.overall",
       "latest.completion.completion_rate_4yr_150nt",
       "latest.student.size",
+      "latest.aid.median_debt.completers.overall",
       "school.locale"
     ].join(","));
 
@@ -991,6 +996,7 @@ app.post("/api/match-v2", async (req, res) => {
             admission_rate: college["latest.admissions.admission_rate.overall"] ?? null,
             graduation_rate: college["latest.completion.completion_rate_4yr_150nt"] ?? null,
             student_size: college["latest.student.size"] ?? null,
+            median_debt: college["latest.aid.median_debt.completers.overall"] ?? null,
             locale: college["school.locale"] ?? null,
             locale_label: localeLabel(college["school.locale"]),
             hbcu: Number(college["school.minority_serving.historically_black"] || 0) === 1,
@@ -1022,6 +1028,7 @@ app.post("/api/match-v2", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
