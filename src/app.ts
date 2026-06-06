@@ -135,8 +135,7 @@ app.get("/api/colleges", async (req, res) => {
         state: String(row?.["school.state"] ?? ""),
         url: row?.["school.url"] ? String(row["school.url"]) : undefined,
         website: row?.["school.url"] ? String(row["school.url"]) : undefined,
-        size: safeNum(row?.["latest.student.size",
-      "school.locale"]),
+        size: safeNum(row?.["latest.student.size"]),
         tuition,
         locale,
         locale_label: localeLabel(locale),
@@ -206,8 +205,7 @@ app.get("/api/college/:id", async (req, res) => {
       state: String(row?.["school.state"] ?? ""),
       url: row?.["school.url"] ? String(row["school.url"]) : undefined,
       website: row?.["school.url"] ? String(row["school.url"]) : undefined,
-      size: safeNum(row?.["latest.student.size",
-      "school.locale"]),
+      size: safeNum(row?.["latest.student.size"]),
       tuition,
       locale,
       locale_label: localeLabel(locale),
@@ -282,8 +280,7 @@ app.get("/api/colleges/:id", async (req, res) => {
           : null,
         locale: row?.["school.locale"] ?? null,
         hbcu: row?.["school.minority_serving.historically_black"] === 1,
-        size: row?.["latest.student.size",
-      "school.locale"] ?? null,
+        size: row?.["latest.student.size"] ?? null,
         tuition_in_state: row?.["latest.cost.tuition.in_state"] ?? null,
         tuition_out_of_state: row?.["latest.cost.tuition.out_of_state"] ?? null,
         admission_rate: row?.["latest.admissions.admission_rate.overall"] ?? null,
@@ -421,8 +418,7 @@ app.post("/api/match", async (req, res) => {
         const city = row?.["school.city"] ?? "";
         const state = row?.["school.state"] ?? "";
         const website = row?.["school.school_url"] ?? null;
-        const size = row?.["latest.student.size",
-      "school.locale"] ?? null;
+        const size = row?.["latest.student.size"] ?? null;
         const tuition = getTuition(row);
         const locLabel = localeLabel(row?.["school.locale"]);
         const isHbcu = row?.["school.minority_serving.historically_black"] === 1;
@@ -982,8 +978,9 @@ app.post("/api/match-v2", async (req, res) => {
             tuition_out_of_state: college["latest.cost.tuition.out_of_state"] ?? null,
             admission_rate: college["latest.admissions.admission_rate.overall"] ?? null,
             graduation_rate: college["latest.completion.completion_rate_4yr_150nt"] ?? null,
-            student_size: college["latest.student.size",
-      "school.locale"] ?? null,
+            student_size: college["latest.student.size"] ?? null,
+            locale: college["school.locale"] ?? null,
+            locale_label: localeLabel(college["school.locale"]),
             hbcu: Number(college["school.minority_serving.historically_black"] || 0) === 1,
           },
           score: scored.score,
@@ -1013,6 +1010,7 @@ app.post("/api/match-v2", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on http://0.0.0.0:${port}`);
 });
+
 
 
 
